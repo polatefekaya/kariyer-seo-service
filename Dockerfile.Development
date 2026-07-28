@@ -19,12 +19,15 @@
 ARG DOTNET_VERSION=10.0
 
 FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION}-noble
+ARG GITHUB_USER
+ARG GITHUB_TOKEN
 
 WORKDIR /src
 
-# GitHub Packages hosts Kariyer.Messaging.Contracts. BuildKit secrets rather than build args so
-# the token never lands in a layer — the same handling as the production image, because a dev
-# image ends up on shared machines too.
+# GitHub Packages hosts Kariyer.Messaging.Contracts. Build args rather than BuildKit secrets —
+# the same handling as the production image — because podman-compose cannot translate an
+# environment-sourced compose secret into a podman build --secret flag. The ARGs above reach
+# the RUN below as environment variables, resolving nuget.config's %GITHUB_USER%/%GITHUB_TOKEN%.
 COPY nuget.config Directory.Build.props Directory.Packages.props ./
 COPY src/Kariyer.Seo.Domain/*.csproj ./src/Kariyer.Seo.Domain/
 COPY src/Kariyer.Seo.Worker/*.csproj ./src/Kariyer.Seo.Worker/
@@ -33,11 +36,7 @@ COPY src/Kariyer.Seo.Worker/*.csproj ./src/Kariyer.Seo.Worker/
 # first compile. The bind mount in the compose file overlays the source afterwards; obj/ and
 # bin/ live in the image (see the compose's anonymous volumes) so a host-side build cannot
 # collide with the container's.
-RUN --mount=type=secret,id=github_user \
-    --mount=type=secret,id=github_token \
-    GITHUB_USER="$(cat /run/secrets/github_user 2>/dev/null || echo)" \
-    GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || echo)" \
-    dotnet restore src/Kariyer.Seo.Worker/Kariyer.Seo.Worker.csproj
+RUN dotnet restore src/Kariyer.Seo.Worker/Kariyer.Seo.Worker.csproj
 
 COPY src/ ./src/
 

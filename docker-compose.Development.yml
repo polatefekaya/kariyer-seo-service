@@ -40,9 +40,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.Development
-      secrets:
-        - github_user
-        - github_token
+      args:
+        GITHUB_USER: ${GITHUB_USER}
+        GITHUB_TOKEN: ${GITHUB_TOKEN}
     image: kariyer-seo-service:dev
     depends_on:
       postgres:
@@ -167,9 +167,3 @@ services:
 volumes:
   seo-pgdata:
   seo-minio:
-
-secrets:
-  github_user:
-    environment: GITHUB_USER
-  github_token:
-    environment: GITHUB_TOKEN

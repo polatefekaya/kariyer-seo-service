@@ -9,21 +9,21 @@ ARG DOTNET_VERSION=10.0
 FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION}-noble AS build
 ARG BUILD_CONFIGURATION=Release
 ARG TARGETARCH
+ARG GITHUB_USER
+ARG GITHUB_TOKEN
 
 WORKDIR /src
 
-# GitHub Packages hosts Kariyer.Messaging.Contracts. Passed as BuildKit secrets rather than
-# build args so the token never lands in an image layer.
+# GitHub Packages hosts Kariyer.Messaging.Contracts. Passed as build args (not BuildKit
+# secrets) because podman-compose cannot translate an environment-sourced compose secret
+# into a podman build --secret flag. The ARGs above are visible to the RUN below as
+# environment variables, which is what resolves nuget.config's %GITHUB_USER%/%GITHUB_TOKEN%.
 COPY nuget.config Directory.Build.props Directory.Packages.props ./
 COPY src/Kariyer.Seo.Domain/*.csproj ./src/Kariyer.Seo.Domain/
 COPY src/Kariyer.Seo.Worker/*.csproj ./src/Kariyer.Seo.Worker/
 
 # Restore before copying sources so a code-only change reuses the package layer.
-RUN --mount=type=secret,id=github_user \
-    --mount=type=secret,id=github_token \
-    GITHUB_USER="$(cat /run/secrets/github_user)" \
-    GITHUB_TOKEN="$(cat /run/secrets/github_token)" \
-    dotnet restore src/Kariyer.Seo.Worker/Kariyer.Seo.Worker.csproj \
+RUN dotnet restore src/Kariyer.Seo.Worker/Kariyer.Seo.Worker.csproj \
         -a "${TARGETARCH:-amd64}"
 
 COPY src/ ./src/

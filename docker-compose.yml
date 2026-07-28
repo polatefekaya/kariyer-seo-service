@@ -25,9 +25,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      secrets:
-        - github_user
-        - github_token
+      args:
+        GITHUB_USER: ${GITHUB_USER}
+        GITHUB_TOKEN: ${GITHUB_TOKEN}
     image: kariyer-seo-service:latest
     container_name: kariyer-seo-builder
     network_mode: host
@@ -90,9 +90,3 @@ services:
   #     retries: 3
   #     start_period: 30s
   #   restart: unless-stopped
-
-secrets:
-  github_user:
-    environment: GITHUB_USER
-  github_token:
-    environment: GITHUB_TOKEN
