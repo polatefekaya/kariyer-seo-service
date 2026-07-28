@@ -4,10 +4,15 @@
   </PropertyGroup>
 
   <ItemGroup Label="Shared contracts">
-    <!-- 1.2.0 adds the Cms/ folder, published by kariyer-cms-service and consumed here for
-         sitemap latency on CMS pages. 1.1.0 added the Seo/ folder this service publishes.
-         Restore fails below 1.2.0 because CmsPagePublishedEvent does not exist there. -->
-    <PackageVersion Include="Kariyer.Messaging.Contracts" Version="1.2.0" />
+    <!-- The Cms/ folder, published by kariyer-cms-service and consumed here for sitemap
+         latency on CMS pages, arrived in 1.2.0; 1.1.0 added the Seo/ folder this service
+         publishes. Restore fails below 1.2.0 because CmsPagePublishedEvent does not exist there.
+
+         Pinned to 1.2.1, which is the same API as 1.2.0 byte for byte. 1.2.0 was pushed to the
+         registry before its source was committed, so it has no reviewable tree behind it and a
+         published version cannot be replaced — 1.2.1 is that same package republished from a
+         commit. Prefer it over 1.2.0 everywhere. -->
+    <PackageVersion Include="Kariyer.Messaging.Contracts" Version="1.2.1" />
   </ItemGroup>
 
   <ItemGroup Label="Messaging">
