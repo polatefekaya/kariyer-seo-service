@@ -154,6 +154,46 @@ public sealed class RabbitTopologyTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TheCmsPageIdentityIsRestoredIntoBaggageOnTheConsumingSide()
+    {
+        const string PageId = "8f3c1a2b-4d5e-4f6a-9b8c-7d6e5f4a3b2c";
+        const string Path = "/kariyer-rehberi/bagaj";
+
+        // Published the way kariyer-cms-service publishes it: the page identity in HEADERS.
+        //
+        // Not in baggage — that is the whole point. MassTransit propagates exactly one header,
+        // MT-Activity-Id (the traceparent), so a producer that merely set Baggage.Current would
+        // send nothing and this test would fail. The two hand-rolled halves — CmsEventPublisher
+        // writing the header, BaggageRestoration reading it — exist to close that gap, and this
+        // is the only test that covers the reading half.
+        await _producerSide.GetRequiredService<IBus>().Publish(
+            new CmsPagePublishedEvent
+            {
+                MessageId = "wire-baggage",
+                PageId = PageId,
+                Path = Path,
+                Indexable = true,
+                Locales = ["tr"],
+                PublishedAt = DateTimeOffset.UtcNow,
+            },
+            context =>
+            {
+                context.Headers.Set("cms.page_id", PageId);
+                context.Headers.Set("cms.path", Path);
+            });
+
+        Assert.True(
+            await EventuallyAsync(() =>
+                Task.FromResult(_cache.Purged.Contains($"prerender:{Site}{Path}"))),
+            "The message never reached the consumer, so baggage restoration was never exercised.");
+
+        // Ambient inside the consumer's work. Everything BaggageSpanProcessor does downstream
+        // follows from this being true.
+        Assert.Equal(PageId, _cache.BaggagePageId);
+        Assert.Equal(Path, _cache.BaggagePath);
+    }
+
+    [Fact]
     public async Task TheTwoSourcesUseSeparateQueues()
     {
         // Independence is the reason for two queues rather than one: a CMS outage must not
@@ -330,6 +370,19 @@ public sealed class RabbitTopologyTests : IAsyncLifetime
             }
         }
 
+        /// <summary>
+        /// The ambient baggage at the moment the consumer did its work.
+        ///
+        /// Captured HERE — several frames below the consume filter that restores it — rather than
+        /// in the filter itself. Baggage is AsyncLocal, and the property worth asserting is not
+        /// "the filter set it" but "it is still ambient where the work happens", which is what
+        /// makes it reach the spans that work produces. A capture inside the filter would pass
+        /// even if the value were lost one await later.
+        /// </summary>
+        public string? BaggagePageId { get; private set; }
+
+        public string? BaggagePath { get; private set; }
+
         public Task<int> PurgeJobAsync(string slug, CancellationToken ct) =>
             Record(Domain.Urls.PrerenderKeys.For(Site, slug));
 
@@ -338,6 +391,9 @@ public sealed class RabbitTopologyTests : IAsyncLifetime
 
         private Task<int> Record(string[] keys)
         {
+            BaggagePageId ??= OpenTelemetry.Baggage.GetBaggage("cms.page_id");
+            BaggagePath ??= OpenTelemetry.Baggage.GetBaggage("cms.path");
+
             lock (_purged)
             {
                 _purged.AddRange(keys);

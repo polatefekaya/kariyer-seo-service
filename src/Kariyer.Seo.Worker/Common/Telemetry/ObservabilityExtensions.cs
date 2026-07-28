@@ -35,7 +35,14 @@ public static class ObservabilityExtensions
         string otlpEndpoint =
             Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT")
             ?? builder.Configuration["Observability:OtlpEndpoint"]
-            ?? "http://localhost:4317";
+            ?? OtlpTransport.DefaultEndpoint;
+
+        // Setting Endpoint explicitly (which OtlpTransport does, because it appends the per-signal
+        // path) stops the SDK merging OTEL_EXPORTER_OTLP_HEADERS on our behalf, so the value is
+        // read here and passed to every exporter by hand. Blank is fine for a collector on the
+        // private network; SigNoz Cloud wants signoz-access-token=… here.
+        string otlpHeaders =
+            Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS") ?? string.Empty;
 
         string roleName = role.ToString().ToLowerInvariant();
 
@@ -101,10 +108,22 @@ public static class ObservabilityExtensions
             opts.IncludeScopes = true;
             opts.ParseStateValues = true;
             opts.SetResourceBuilder(resourceBuilder);
-            opts.AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint));
+            opts.AddOtlpExporter(o => OtlpTransport.Configure(o, otlpEndpoint, "LOGS", otlpHeaders));
         });
 
-        builder.Logging.AddFilter<OpenTelemetryLoggerProvider>(null, LogLevel.Information);
+        // OTLP log volume valve. Information keeps Debug/Trace out of SigNoz, which is the right
+        // default — but during an incident the missing detail is exactly the Debug line, and
+        // widening it should not need a redeploy. Set OTEL_LOGS_MINIMUM_LEVEL=Debug and restart.
+        // Console output is unaffected; only what ships to the collector changes.
+        LogLevel otlpLogLevel =
+            Enum.TryParse(
+                Environment.GetEnvironmentVariable("OTEL_LOGS_MINIMUM_LEVEL"),
+                ignoreCase: true,
+                out LogLevel parsedLevel)
+                ? parsedLevel
+                : LogLevel.Information;
+
+        builder.Logging.AddFilter<OpenTelemetryLoggerProvider>(null, otlpLogLevel);
 
         builder.Services.AddOpenTelemetry()
             .ConfigureResource(r => r
@@ -127,7 +146,12 @@ public static class ObservabilityExtensions
                 tracing.AddEntityFrameworkCoreInstrumentation();
                 tracing.AddSource("MassTransit");
                 tracing.AddSource(DiagnosticsConfig.ServiceName);
-                tracing.AddOtlpExporter(opts => opts.Endpoint = new Uri(otlpEndpoint));
+                // Copies the allow-listed baggage onto every span, so work this service does on
+                // behalf of a CMS publish carries that page's id too. See BaggageSpanProcessor.
+                tracing.AddProcessor(new BaggageSpanProcessor());
+
+                tracing.AddOtlpExporter(
+                    opts => OtlpTransport.Configure(opts, otlpEndpoint, "TRACES", otlpHeaders));
             })
             .WithMetrics(metrics =>
             {
@@ -137,7 +161,8 @@ public static class ObservabilityExtensions
                 metrics.AddRuntimeInstrumentation();
                 metrics.AddMeter("MassTransit");
                 metrics.AddMeter(DiagnosticsConfig.ServiceName);
-                metrics.AddOtlpExporter(opts => opts.Endpoint = new Uri(otlpEndpoint));
+                metrics.AddOtlpExporter(
+                    opts => OtlpTransport.Configure(opts, otlpEndpoint, "METRICS", otlpHeaders));
                 metrics.AddPrometheusExporter();
             });
 

@@ -56,6 +56,11 @@ public static class MessagingExtensions
             {
                 cfg.Host(new Uri(rabbitConnection));
 
+                // Bus-wide, so it covers both queues and anything added later. See
+                // BaggageRestoration: MassTransit propagates the traceparent but not baggage, so
+                // the page id a CMS publish put on the message is lifted back here by hand.
+                cfg.UseCmsBaggage();
+
                 RabbitOptions rabbit = context.GetRequiredService<IOptions<RabbitOptions>>().Value;
 
                 // House convention: <service>.<entity>.<action> fanout exchanges.
