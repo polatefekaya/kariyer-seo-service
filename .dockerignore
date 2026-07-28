@@ -21,7 +21,8 @@ README.md
 **/.DS_Store
 
 # Credentials and local overrides. .env in particular holds the GitHub Packages token —
-# the Dockerfile takes it as a BuildKit secret so it never becomes a layer.
+# keeping it out of the context matters because the Dockerfile now takes that token as a
+# build arg, so nothing here should also ship it as a file.
 .env
 **/.env
 **/appsettings.Development.json

@@ -111,10 +111,12 @@ jobs:
           context: .
           file: Dockerfile
           push: false
-          # BuildKit secrets, matching the --mount=type=secret ids in the Dockerfile.
-          # Secrets rather than build args so the token never becomes an image layer.
-          secrets: |
-            github_user=${{ github.actor }}
-            github_token=${{ secrets.GITHUB_TOKEN }}
+          # Build args, matching the ARG GITHUB_USER/GITHUB_TOKEN in the Dockerfile. Not
+          # BuildKit secrets: podman-compose cannot translate those, so the Dockerfile stopped
+          # using them. The token does land in image history, which is acceptable only because
+          # push is false above — this image proves the build compiles and is then discarded.
+          build-args: |
+            GITHUB_USER=${{ github.actor }}
+            GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
