@@ -1,0 +1,98 @@
+name: kariyer-seo-service
+
+# Production stack.
+#
+# Host networking, matching kariyer-file-service and kariyer-cms-service: Postgres, RabbitMQ,
+# Garnet and the OTel collector are the shared ones on the host, exactly as .env specifies.
+#
+#   cp .env.example .env    # then fill it in
+#   docker compose up -d --build
+#   # -> http://127.0.0.1:5310/health
+#
+# ── SCALE THIS TO EXACTLY ONE OF EACH ROLE ────────────────────────────────────
+# Both services below are pinned to a single replica and must stay that way. Two builders
+# staging sitemap.xml concurrently can swap in each other's half-finished index, and the only
+# party who ever finds out is the crawler that fetched during the window — there is no error, no
+# log line and no metric for it. Two reactors would double-consume the freshness queue.
+#
+# `SERVICE_ROLE` is set here rather than in the image on purpose: the role has to be stated
+# where the replica count is stated, so the two cannot drift apart.
+#
+# Launch as a single `all` process instead by commenting both out and uncommenting `seo-all`.
+
+services:
+  seo-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      secrets:
+        - github_user
+        - github_token
+    image: kariyer-seo-service:latest
+    container_name: kariyer-seo-builder
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      SERVICE_ROLE: builder
+      # Host networking means no port mapping, so the listen port IS the host port. The two
+      # roles cannot share one.
+      ASPNETCORE_HTTP_PORTS: 5310
+    healthcheck:
+      test: ['CMD', 'dotnet', '/app/Kariyer.Seo.Worker.dll', '--healthcheck']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '20m', max-file: '5' }
+
+  seo-reactor:
+    image: kariyer-seo-service:latest
+    container_name: kariyer-seo-reactor
+    network_mode: host
+    depends_on:
+      - seo-builder
+    env_file:
+      - .env
+    environment:
+      SERVICE_ROLE: reactor
+      ASPNETCORE_HTTP_PORTS: 5311
+    healthcheck:
+      test: ['CMD', 'dotnet', '/app/Kariyer.Seo.Worker.dll', '--healthcheck']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '20m', max-file: '5' }
+
+  # ── Single-process alternative ──────────────────────────────────────────────
+  # PLAN §5 names `all` as the launch configuration. Use this OR the two above, never both — an
+  # `all` process alongside a builder is two concurrent R2 writers.
+  #
+  # seo-all:
+  #   image: kariyer-seo-service:latest
+  #   container_name: kariyer-seo
+  #   network_mode: host
+  #   env_file: [.env]
+  #   environment:
+  #     SERVICE_ROLE: all
+  #     ASPNETCORE_HTTP_PORTS: 5310
+  #   healthcheck:
+  #     test: ['CMD', 'dotnet', '/app/Kariyer.Seo.Worker.dll', '--healthcheck']
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 30s
+  #   restart: unless-stopped
+
+secrets:
+  github_user:
+    environment: GITHUB_USER
+  github_token:
+    environment: GITHUB_TOKEN

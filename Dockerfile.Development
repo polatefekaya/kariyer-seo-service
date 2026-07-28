@@ -1,0 +1,59 @@
+# Development image: hot reload, NOT a debug build of the production image.
+#
+# The difference from Dockerfile is deliberate and total. That one publishes a
+# framework-dependent Release build onto the aspnet runtime image and never sees the source
+# again. This one stays on the SDK image and runs `dotnet watch`, so a saved .cs file
+# recompiles in place — which is the only reason to containerise a service you are actively
+# editing rather than just running `dotnet run` on the host.
+#
+# The trade is size and startup: this image carries the whole SDK and restores on every cold
+# start. Never deploy it.
+#
+# SERVICE_ROLE defaults to `all` HERE and nowhere else. The production Dockerfile deliberately
+# refuses a default — two replicas staging sitemap.xml concurrently can swap in each other's
+# half-finished index, so the role has to be stated where the replica count is. On one
+# developer's machine there is exactly one process and `all` is the only useful shape.
+#
+#   docker compose -f docker-compose.Development.yml up --build
+
+ARG DOTNET_VERSION=10.0
+
+FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION}-noble
+
+WORKDIR /src
+
+# GitHub Packages hosts Kariyer.Messaging.Contracts. BuildKit secrets rather than build args so
+# the token never lands in a layer — the same handling as the production image, because a dev
+# image ends up on shared machines too.
+COPY nuget.config Directory.Build.props Directory.Packages.props ./
+COPY src/Kariyer.Seo.Domain/*.csproj ./src/Kariyer.Seo.Domain/
+COPY src/Kariyer.Seo.Worker/*.csproj ./src/Kariyer.Seo.Worker/
+
+# Restored at build time so a cold `up` does not spend a minute pulling packages before the
+# first compile. The bind mount in the compose file overlays the source afterwards; obj/ and
+# bin/ live in the image (see the compose's anonymous volumes) so a host-side build cannot
+# collide with the container's.
+RUN --mount=type=secret,id=github_user \
+    --mount=type=secret,id=github_token \
+    GITHUB_USER="$(cat /run/secrets/github_user 2>/dev/null || echo)" \
+    GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || echo)" \
+    dotnet restore src/Kariyer.Seo.Worker/Kariyer.Seo.Worker.csproj
+
+COPY src/ ./src/
+
+ENV ASPNETCORE_ENVIRONMENT=Development \
+    ASPNETCORE_HTTP_PORTS=8080 \
+    SERVICE_ROLE=all \
+    DOTNET_USE_POLLING_FILE_WATCHER=1 \
+    DOTNET_WATCH_RESTART_ON_RUDE_EDIT=1
+
+# POLLING_FILE_WATCHER above is not optional on macOS or Windows: inotify events do not cross a
+# bind mount from those hosts, so without it `dotnet watch` sits there having noticed nothing.
+# It costs a little CPU on Linux, where it is unnecessary but harmless.
+
+EXPOSE 8080
+
+WORKDIR /src/src/Kariyer.Seo.Worker
+
+# --non-interactive: watch otherwise prompts on a rude edit and blocks forever with no TTY.
+ENTRYPOINT ["dotnet", "watch", "run", "--non-interactive", "--urls", "http://0.0.0.0:8080"]
