@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /hesabim
+Disallow: /isveren/panel
+Disallow: /admin
+
+Sitemap: https://kariyerzamani.com/sitemap.xml

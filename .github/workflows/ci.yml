@@ -1,0 +1,120 @@
+# Build and test on every push and pull request.
+#
+# The integration suite is NOT optional here and is not split into a separate opt-in job.
+# The statements it covers — the single-pass facet aggregate over two text[] columns, the
+# set-based corpus sync, and the stage-and-swap ordering — cannot be verified any other way:
+# their correctness IS their interaction with Postgres and with the sink's contract. A
+# pipeline that skipped them would report green on exactly the changes most capable of
+# de-indexing a catalogue.
+#
+# Testcontainers needs a Docker daemon; ubuntu-latest runners ship one.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Kariyer.Messaging.Contracts is hosted on GitHub Packages; restore cannot resolve the
+  # shared contracts without read access to it.
+  packages: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          # Matches Directory.Build.props. global.json is absent, so this is what pins the SDK.
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        # nuget.config reads these two by name for the GitHub Packages source. GITHUB_TOKEN
+        # is scoped to this run and expires with it.
+        env:
+          GITHUB_USER: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: dotnet restore Kariyer.Seo.slnx
+
+      - name: Build
+        run: dotnet build Kariyer.Seo.slnx --configuration Release --no-restore
+
+      - name: Test — domain (pure, golden XML fixtures)
+        run: >
+          dotnet test tests/Kariyer.Seo.Domain.Tests
+          --configuration Release --no-build
+          --logger "trx;LogFileName=domain.trx" --results-directory artifacts/test-results
+
+      - name: Test — worker (roles, options, debounce, schema)
+        run: >
+          dotnet test tests/Kariyer.Seo.Worker.Tests
+          --configuration Release --no-build
+          --logger "trx;LogFileName=worker.trx" --results-directory artifacts/test-results
+
+      - name: Test — integration (Testcontainers Postgres + RabbitMQ)
+        run: >
+          dotnet test tests/Kariyer.Seo.IntegrationTests
+          --configuration Release --no-build
+          --logger "trx;LogFileName=integration.trx" --results-directory artifacts/test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: artifacts/test-results
+          retention-days: 14
+
+  # A broken Dockerfile is a deploy-time failure that no test catches, so the image is built
+  # on every run. It is not pushed — this proves it compiles, nothing more.
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          # BuildKit secrets, matching the --mount=type=secret ids in the Dockerfile.
+          # Secrets rather than build args so the token never becomes an image layer.
+          secrets: |
+            github_user=${{ github.actor }}
+            github_token=${{ secrets.GITHUB_TOKEN }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

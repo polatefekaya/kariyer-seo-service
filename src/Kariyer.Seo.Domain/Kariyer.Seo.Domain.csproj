@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The domain is PURE, and this file staying EMPTY is how that is enforced.
+
+    No package reference belongs here. Not EF Core, not MassTransit, not the AWS SDK, not
+    StackExchange.Redis, not Microsoft.Extensions.* — not even Configuration.Abstractions or
+    a logging abstraction. Everything the domain needs from the outside world arrives as a
+    parameter or through a port in Ports/, and every timestamp arrives as a DateTimeOffset
+    the caller chose.
+
+    Why it matters here specifically: the sitemap XML, the 50k chunking and the indexation
+    thresholds are the parts of this service a crawler judges us on, and they are the parts
+    hardest to observe in production — a wrong <lastmod> or a facet gated out by an
+    off-by-one is invisible until traffic drops weeks later. Keeping them free of I/O is
+    what lets them be asserted against golden fixtures in milliseconds, on every commit,
+    without a database, a broker or an object store being anywhere near the test.
+
+    System.Xml and System.IO.Compression ARE used, and are fine: both are in the shared
+    framework, both operate on a Stream the CALLER supplies, and neither opens a socket or
+    touches the filesystem on its own.
+  -->
+
+  <ItemGroup>
+    <!-- Not a dependency — an assembly attribute. It lets the golden tests assert on
+         SitemapWriter.Format directly, so the <lastmod> normalisation rule is covered as a
+         rule rather than only through the documents that happen to embed it. -->
+    <InternalsVisibleTo Include="Kariyer.Seo.Domain.Tests" />
+  </ItemGroup>
+
+</Project>

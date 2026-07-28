@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <!-- This service only ever formats invariant (absolute URLs, ISO timestamps, checksums).
+         Dropping ICU shrinks the container and removes a native dependency.
+
+         Note what this means for Turkish text: `ToLowerInvariant` on 'İ' does NOT produce
+         'i' under invariant globalization. Every Turkish fold in this service therefore
+         goes through Domain/Indexation/TurkishFold, which maps the letters explicitly and
+         does not depend on a culture being installed. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+</Project>

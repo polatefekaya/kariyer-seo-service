@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <UserSecretsId>kariyer-seo-service</UserSecretsId>
+
+    <!-- ReadyToRun for startup. NOT Native AOT — MassTransit, EF Core and the AWS SDK are
+         reflection-heavy, and this service is I/O-bound (Postgres, R2, Garnet), so AOT's
+         wins would not pay for the breakage.
+
+         Trimming is deliberately NOT enabled: it requires a self-contained publish, and the
+         Dockerfile publishes framework-dependent onto a base image that already carries the
+         runtime. Shipping a second copy to then trim it would make the image larger. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Kariyer.Seo.IntegrationTests" />
+    <InternalsVisibleTo Include="Kariyer.Seo.Worker.Tests" />
+  </ItemGroup>
+
+  <ItemGroup Label="Contracts">
+    <PackageReference Include="Kariyer.Messaging.Contracts" />
+  </ItemGroup>
+
+  <ItemGroup Label="Messaging">
+    <PackageReference Include="MassTransit" />
+    <PackageReference Include="MassTransit.RabbitMQ" />
+    <PackageReference Include="MassTransit.EntityFrameworkCore" />
+  </ItemGroup>
+
+  <ItemGroup Label="Persistence">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- Design-time only. PrivateAssets must be stated HERE, on the PackageReference: under
+         central package management it does not flow from Directory.Packages.props, and
+         without it Roslyn and MSBuild (~43 MB) are published into the runtime image for a
+         tool that only ever runs on a developer's machine. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup Label="Object store and cache">
+    <PackageReference Include="AWSSDK.S3" />
+    <PackageReference Include="StackExchange.Redis" />
+  </ItemGroup>
+
+  <ItemGroup Label="Observability">
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Process" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Kariyer.Seo.Domain\Kariyer.Seo.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Kariyer.Seo.Domain/Kariyer.Seo.Domain.csproj" />
+    <Project Path="src/Kariyer.Seo.Worker/Kariyer.Seo.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Kariyer.Seo.Domain.Tests/Kariyer.Seo.Domain.Tests.csproj" />
+    <Project Path="tests/Kariyer.Seo.Worker.Tests/Kariyer.Seo.Worker.Tests.csproj" />
+    <Project Path="tests/Kariyer.Seo.IntegrationTests/Kariyer.Seo.IntegrationTests.csproj" />
+  </Folder>
+</Solution>
