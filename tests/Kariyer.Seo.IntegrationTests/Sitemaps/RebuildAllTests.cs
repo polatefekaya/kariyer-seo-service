@@ -171,6 +171,36 @@ public sealed class RebuildAllTests(PostgresFixture postgres) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task NoSitemapEverAdvertisesTheCmsPreviewRoute()
+    {
+        // /cms-preview is the CMS admin console's live preview: an internal tool on the PUBLIC
+        // origin that renders unpublished drafts. Nothing should be able to put it in a sitemap
+        // — it is not a cms.seo_page row, so no URL source can produce it today.
+        //
+        // Asserted anyway, across EVERY file rather than the one that looks likely, because a
+        // sitemap is the most effective discovery mechanism there is: a future URL source that
+        // started emitting it would hand Googlebot a direct route to unreleased content, and the
+        // only signal would be the content appearing in the index.
+        await postgres.SeedJobAsync("job-1", "slug-1", province: "İstanbul");
+        await postgres.SeedCmsPageAsync("/kariyer-rehberi/cv-nasil-yazilir");
+
+        await using Harness harness = await Harness.StartAsync(postgres);
+        await harness.Builder.RebuildAsync("test", CancellationToken.None);
+
+        foreach ((string name, StoredFile file) in harness.Sink.Live)
+        {
+            if (name == SitemapNames.Robots)
+            {
+                // robots.txt is the one file that SHOULD name it — as a Disallow, never a URL.
+                Assert.Contains("Disallow: /cms-preview", file.Text, StringComparison.Ordinal);
+                continue;
+            }
+
+            Assert.DoesNotContain("cms-preview", file.Text, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public async Task OnlyFacetsClearingTheirThresholdReachTheFilterSitemap()
     {
         // Nine jobs in İstanbul/Bilişim: enough for the single-axis city page (≥ 5), NOT

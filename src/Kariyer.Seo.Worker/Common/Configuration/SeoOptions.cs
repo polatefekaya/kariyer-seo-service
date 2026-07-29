@@ -74,6 +74,15 @@ public sealed class SeoOptions
     public IReadOnlyList<string> DisallowedPaths { get; init; } =
     [
         "/api/", "/hesabim", "/isveren/panel", "/admin",
+
+        // The CMS admin console's live preview. It renders UNPUBLISHED drafts at a URL on the
+        // public origin, so it is the one entry here that guards content rather than noise.
+        //
+        // This line saves crawl budget and nothing more — per the note above, it cannot de-index.
+        // The route de-indexes itself with `noindex,nofollow` plus `prerender-status-code: 404`,
+        // and the gateway serves `X-Robots-Tag: noindex` for it. See CmsPreviewRoute.tsx in
+        // kariyer-zamani-web for why no single one of those is sufficient on its own.
+        "/cms-preview",
     ];
 
     /// <summary>
