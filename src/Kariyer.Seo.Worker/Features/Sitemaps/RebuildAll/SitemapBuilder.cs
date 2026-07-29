@@ -337,7 +337,8 @@ public sealed class SitemapBuilder(
         {
             robots = SitemapWriter.WriteText(
                 SitemapNames.Robots,
-                RobotsPolicy.Build(Seo.SiteUrl, "/" + SitemapNames.Index, Seo.DisallowedPaths),
+                RobotsPolicy.Build(
+                    Seo.SiteUrl, "/" + SitemapNames.Index, Seo.DisallowedPaths, Seo.AllowIndexing),
                 destination);
         }
 

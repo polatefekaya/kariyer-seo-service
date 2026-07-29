@@ -39,6 +39,53 @@ public sealed class RobotsPolicyTests
     }
 
     [Fact]
+    public void ANonProductionHostDisallowsEverything()
+    {
+        string robots = RobotsPolicy.Build(
+            "https://tst.kariyerzamani.com", "/sitemap.xml",
+            ["/api/", "/hesabim"], allowIndexing: false);
+
+        Fixtures.AssertMatches("robots-noindex-golden.txt", robots);
+    }
+
+    [Fact]
+    public void ANonProductionHostDoesNotAdvertiseItsSitemap()
+    {
+        string robots = RobotsPolicy.Build(
+            "https://tst.kariyerzamani.com", "/sitemap.xml", ["/api/"], allowIndexing: false);
+
+        // Advertising a sitemap you have just told crawlers to ignore is a contradiction, and
+        // some crawlers follow the sitemap anyway — which on a test host means handing them a
+        // complete map of a duplicate of production.
+        Assert.DoesNotContain("Sitemap:", robots, StringComparison.Ordinal);
+
+        // And nothing else a crawler could read as an invitation.
+        Assert.DoesNotContain("Allow:", robots, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ADisallowedHostBlocksEveryUserAgent()
+    {
+        string robots = RobotsPolicy.Build(
+            "https://tst.kariyerzamani.com", "/sitemap.xml", [], allowIndexing: false);
+
+        // `Disallow: /` — with the slash. A bare `Disallow:` means ALLOW EVERYTHING in the
+        // robots.txt grammar, which is exactly the CRA default that left tst crawlable.
+        Assert.Contains("User-agent: *", robots, StringComparison.Ordinal);
+        Assert.Contains("Disallow: /", robots, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IndexingIsAllowedByDefault() =>
+        // The default has to be the production posture. A deployment that forgot the flag and
+        // silently de-listed the whole site would be far worse, and far harder to notice,
+        // than a test host that gets crawled.
+        Assert.Contains(
+            "Allow: /",
+            RobotsPolicy.Build("https://kariyerzamani.com", "/sitemap.xml", []),
+            StringComparison.Ordinal);
+
+    [Fact]
     public void OutputIsDeterministic() =>
         Assert.Equal(
             RobotsPolicy.Build(Site, "/sitemap.xml", ["/api/"]),

@@ -30,16 +30,48 @@ public static class RobotsPolicy
     /// Paths no crawler should fetch: authenticated areas, the API surface, anything that
     /// burns crawl budget on pages with nothing to index.
     /// </param>
+    /// <param name="allowIndexing">
+    /// False on any host that is not production.
+    ///
+    /// This exists because a staging or test deployment is a COMPLETE COPY of the site at a
+    /// different hostname. Left crawlable it competes with production for the same queries on
+    /// the same content, and Google resolves that by picking a winner itself — which may be
+    /// the test host. Handing it a sitemap of every job URL makes that outcome far more
+    /// likely, not less, because a sitemap is the most effective discovery mechanism there is.
+    ///
+    /// When false the file disallows everything and, critically, omits the
+    /// <c>Sitemap:</c> line: advertising a sitemap you have just told crawlers to ignore is a
+    /// contradiction, and some crawlers follow the sitemap anyway.
+    /// </param>
     public static string Build(
         string siteUrl,
         string sitemapIndexPath,
-        IReadOnlyList<string> disallowedPaths)
+        IReadOnlyList<string> disallowedPaths,
+        bool allowIndexing = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(siteUrl);
         ArgumentException.ThrowIfNullOrWhiteSpace(sitemapIndexPath);
         ArgumentNullException.ThrowIfNull(disallowedPaths);
 
         StringBuilder builder = new();
+
+        if (!allowIndexing)
+        {
+            // Deliberately the whole file. No Allow, no per-path rules, no Sitemap line —
+            // nothing a crawler could read as an invitation to fetch one specific thing.
+            //
+            // Note the limit of this, because it is a real one: Disallow blocks CRAWLING, not
+            // indexing. A URL already in the index, or linked from elsewhere, can stay indexed
+            // — and because the crawler may no longer fetch it, it can never see a noindex tag
+            // that would remove it. So this is the right file for a host that was never
+            // indexed, and NOT sufficient on its own to remove one that already was. For that,
+            // serve `X-Robots-Tag: noindex` (which requires crawling to be allowed) or put the
+            // host behind authentication. See DEPLOYMENT.md.
+            builder.Append("User-agent: *\n");
+            builder.Append("Disallow: /\n");
+
+            return builder.ToString();
+        }
 
         builder.Append("User-agent: *\n");
 

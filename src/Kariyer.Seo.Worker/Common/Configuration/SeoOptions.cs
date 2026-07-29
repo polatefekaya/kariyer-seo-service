@@ -32,6 +32,21 @@ public sealed class SeoOptions
     /// </summary>
     public TimeSpan DebounceWindow { get; init; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// Whether this deployment's host may be crawled and indexed at all.
+    ///
+    /// MUST be false on every non-production host. A staging or test deployment is a complete
+    /// copy of the site at a different name; left crawlable it competes with production for
+    /// the same queries on the same content, and publishing a sitemap for it is the most
+    /// effective way to make that happen.
+    ///
+    /// Defaults to TRUE, which is the uncomfortable but correct choice: the alternative is a
+    /// production deployment that forgets to set it and silently de-lists the entire site,
+    /// which is far worse and far harder to notice than a test host that gets crawled. The
+    /// startup log states which way it resolved, loudly, on every boot.
+    /// </summary>
+    public bool AllowIndexing { get; init; } = true;
+
     public ThresholdOptions Thresholds { get; init; } = new();
 
     public FacetManifestOptions FacetManifest { get; init; } = new();
@@ -59,6 +74,15 @@ public sealed class SeoOptions
     public IReadOnlyList<string> DisallowedPaths { get; init; } =
     [
         "/api/", "/hesabim", "/isveren/panel", "/admin",
+
+        // The CMS admin console's live preview. It renders UNPUBLISHED drafts at a URL on the
+        // public origin, so it is the one entry here that guards content rather than noise.
+        //
+        // This line saves crawl budget and nothing more — per the note above, it cannot de-index.
+        // The route de-indexes itself with `noindex,nofollow` plus `prerender-status-code: 404`,
+        // and the gateway serves `X-Robots-Tag: noindex` for it. See CmsPreviewRoute.tsx in
+        // kariyer-zamani-web for why no single one of those is sufficient on its own.
+        "/cms-preview",
     ];
 
     /// <summary>

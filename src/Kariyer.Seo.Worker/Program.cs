@@ -234,6 +234,27 @@ static void LogStartupPlan(WebApplication app, RolePlan plan)
 {
     ILogger<Program> logger = app.Services.GetRequiredService<ILogger<Program>>();
 
+    SeoOptions seo = app.Services.GetRequiredService<IOptions<SeoOptions>>().Value;
+
+    // Stated on every boot, at WARNING either way, because both directions are dangerous in
+    // opposite ways and neither is visible at runtime. Indexable on a test host quietly
+    // competes with production for its own rankings; non-indexable on production quietly
+    // de-lists the entire site. The only defence is that someone reads this line.
+    if (seo.AllowIndexing)
+    {
+        logger.LogWarning(
+            "Publishing an INDEXABLE robots.txt for {SiteUrl}. If this is not the production "
+            + "host, set Seo:AllowIndexing=false — a crawlable copy of the site competes with "
+            + "production for its own rankings.", seo.SiteUrl);
+    }
+    else
+    {
+        logger.LogWarning(
+            "Publishing a NOINDEX robots.txt (Disallow: /) for {SiteUrl}. Sitemaps are still "
+            + "built so the pipeline is verifiable, but nothing here should be crawled. This "
+            + "must never be the production host.", seo.SiteUrl);
+    }
+
     logger.LogInformation(
         "Starting SEO service as {Role}: rebuild={RunsFullRebuild}, "
         + "freshnessConsumers={ConsumesFreshnessEvents}, flush={RunsDirtyFlush}",

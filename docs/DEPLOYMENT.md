@@ -132,6 +132,45 @@ It never needs INSERT, UPDATE or DELETE on `company_job`. Granting them would no
 anything today; withholding them makes PLAN §1 enforceable by the database rather than by
 code review.
 
+### Non-production hosts (tst, staging, preview)
+
+**Set `Seo__AllowIndexing=false` on every host that is not production.** With it false the
+service still builds and publishes the whole sitemap set — so the pipeline is fully
+verifiable — but `robots.txt` becomes:
+
+```
+User-agent: *
+Disallow: /
+```
+
+with **no `Sitemap:` line**, because advertising a sitemap you have just told crawlers to
+ignore is a contradiction and some crawlers follow it anyway.
+
+The reason this matters more than it looks: a test deployment is a *complete copy* of the site
+at a different hostname. Left crawlable it competes with production for the same queries on the
+same content, and Google resolves that by picking a winner itself. Handing it a sitemap of
+every job URL makes that outcome far more likely, because a sitemap is the most effective
+discovery mechanism there is.
+
+Also set the two host-dependent values, or the test deployment will publish URLs pointing at
+**production**:
+
+```bash
+Seo__AllowIndexing=false
+Seo__SiteUrl='https://tst.kariyerzamani.com'
+Seo__FacetManifest__Url='https://tst.kariyerzamani.com/seo/facet-manifest.json'
+```
+
+`Seo__SiteUrl` also drives the Garnet prerender keys, so it must match whatever the
+prerenderer on that host renders under, or every purge silently removes nothing.
+
+> **`Disallow: /` is not enough to REMOVE a host that is already indexed.** It blocks
+> crawling, not indexing — and because the crawler may no longer fetch the page, it can never
+> see a `noindex` that would remove it. For a host that has already been crawled, serve
+> `X-Robots-Tag: noindex` (which requires crawling to stay allowed) or put the host behind
+> authentication. Check with `site:tst.kariyerzamani.com` before assuming this file is
+> sufficient.
+
 ---
 
 ## 4. Cloudflare — serving the files

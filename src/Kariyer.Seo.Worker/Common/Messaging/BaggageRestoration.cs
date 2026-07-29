@@ -35,7 +35,11 @@ public static class BaggageRestoration
 
     private static void Restore(ConsumeContext context)
     {
-        foreach (KeyValuePair<string, object?> header in context.Headers.GetAll())
+        // `object`, not `object?`: MassTransit's GetAll() yields KeyValuePair<string, object>,
+        // and declaring the loop variable as nullable makes the compiler warn about a variance
+        // mismatch (CS8619) rather than accept it. The `is not string` guard below already
+        // handles a null value, so nothing is lost by matching the source type exactly.
+        foreach (KeyValuePair<string, object> header in context.Headers.GetAll())
         {
             if (!CmsBaggage.IsPropagated(header.Key) || header.Value is not string value)
             {
