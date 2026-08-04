@@ -57,11 +57,11 @@ public sealed class SeoOptions
     /// Hand-listed evergreen pages for <c>sitemap-static.xml</c>. These carry no
     /// <c>&lt;lastmod&gt;</c>: this service has no idea when a marketing page last changed,
     /// and inventing a timestamp would be a lie a crawler acts on.
+    ///
+    /// The values live in <c>appsettings.json</c>, not here. See the note on
+    /// <see cref="DisallowedPaths"/> — an initialiser with entries in it doubles them.
     /// </summary>
-    public IReadOnlyList<string> StaticPaths { get; init; } =
-    [
-        "/", "/sirketler", "/cv", "/isveren", "/hakkimizda", "/iletisim", "/sikca-sorulan-sorular",
-    ];
+    public IReadOnlyList<string> StaticPaths { get; init; } = [];
 
     /// <summary>
     /// Paths written into <c>robots.txt</c> as <c>Disallow</c>.
@@ -70,20 +70,20 @@ public sealed class SeoOptions
     /// URL can still be indexed from an external link, and because the crawler may not fetch
     /// it, it can never see the <c>noindex</c> that would remove it. Thin facets are handled
     /// by the count gate, never by a rule here.
+    ///
+    /// <b>Empty here on purpose. Do not put the defaults back.</b> The configuration binder
+    /// APPENDS to a collection property rather than replacing it, so an initialiser with
+    /// entries in it survives alongside the bound values and every entry present in both is
+    /// emitted twice. That shipped: <c>sitemap-static-1.xml</c> carried 14 URLs of which 7
+    /// were unique, and every <c>Disallow</c> line in robots.txt appeared twice — duplicate
+    /// <c>&lt;loc&gt;</c> being invalid per the sitemaps protocol. Nothing detects it at
+    /// runtime, which is why <c>SeoOptionsExtensions</c> now refuses to start on a duplicate.
+    ///
+    /// <c>appsettings.json</c> is the single source, and it ships inside the image, so this
+    /// costs no resilience — there is no deployment in which the file is absent but the
+    /// binary is present. The entries and the reasoning for each live there.
     /// </summary>
-    public IReadOnlyList<string> DisallowedPaths { get; init; } =
-    [
-        "/api/", "/hesabim", "/isveren/panel", "/admin",
-
-        // The CMS admin console's live preview. It renders UNPUBLISHED drafts at a URL on the
-        // public origin, so it is the one entry here that guards content rather than noise.
-        //
-        // This line saves crawl budget and nothing more — per the note above, it cannot de-index.
-        // The route de-indexes itself with `noindex,nofollow` plus `prerender-status-code: 404`,
-        // and the gateway serves `X-Robots-Tag: noindex` for it. See CmsPreviewRoute.tsx in
-        // kariyer-zamani-web for why no single one of those is sufficient on its own.
-        "/cms-preview",
-    ];
+    public IReadOnlyList<string> DisallowedPaths { get; init; } = [];
 
     /// <summary>
     /// Cache-Control written onto every R2 object.
@@ -161,10 +161,31 @@ public sealed class R2Options
     public string StagingPrefix { get; init; } = "_staging/";
 
     /// <summary>
-    /// Gzip the uploaded files. Google accepts <c>.xml.gz</c> sitemaps, and the corpus
-    /// compresses roughly tenfold.
+    /// Gzip the uploaded XML. Google accepts <c>.xml.gz</c> sitemaps and the corpus
+    /// compresses roughly tenfold, so this is worth having when the bucket is served
+    /// directly.
+    ///
+    /// <b>Defaults to false because Cloudflare fronts this bucket.</b> Pre-compressing in
+    /// object storage is only right when object storage is the origin a client talks to.
+    /// Behind a CDN it duplicates a job the edge does better — the edge negotiates brotli or
+    /// gzip per client, from the same stored object — and it creates an encoding hazard the
+    /// edge cannot see through. Observed in production with this on: a client sending
+    /// <c>Accept-Encoding: gzip</c> needed TWO gunzip passes to reach the XML, because
+    /// Cloudflare re-compressed a body that was already gzip; a client sending none received
+    /// gzip bytes with no <c>Content-Encoding</c> at all and <c>Content-Type:
+    /// application/xml</c>, which is simply binary mislabelled as a document. Fetched
+    /// straight from R2 both were fine, so the stored objects were never the problem —
+    /// storing them compressed at all was.
+    ///
+    /// <b>Turning this on changes the URLs.</b> The stored keys gain a <c>.gz</c> suffix and
+    /// the sitemap index names its children with it, so the Cloudflare route that maps
+    /// <c>/sitemap-*.xml</c> to the bucket has to map to <c>.xml.gz</c> in the same change.
+    /// Flip one without the other and the index becomes a list of 404s — see
+    /// <c>docs/DEPLOYMENT.md</c> §4.
+    ///
+    /// Set it to true only for a deployment serving straight from the bucket with no CDN.
     /// </summary>
-    public bool Compress { get; init; } = true;
+    public bool Compress { get; init; }
 
     /// <summary>True once the bucket is addressable at all.</summary>
     public bool IsConfigured =>

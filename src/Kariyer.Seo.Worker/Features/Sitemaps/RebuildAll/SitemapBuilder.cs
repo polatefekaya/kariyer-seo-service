@@ -368,8 +368,9 @@ public sealed class SitemapBuilder(
 
             // The index points at the STORED name, including the .gz suffix when compressed —
             // that is the URL a crawler will actually request. Naming the uncompressed file
-            // here would produce an index of 404s.
-            string stored = Seo.R2.Compress ? chunk.FileName + ".gz" : chunk.FileName;
+            // here would produce an index of 404s. Through SitemapNames rather than an
+            // expression of its own, so it cannot drift from what the sink actually writes.
+            string stored = SitemapNames.StoredName(chunk.FileName, Seo.R2.Compress);
 
             children.Add(new SitemapIndexEntry(
                 SiteUrls.Absolute(Seo.SiteUrl, "/" + stored), chunk.NewestLastModified));

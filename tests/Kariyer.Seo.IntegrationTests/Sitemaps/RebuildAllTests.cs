@@ -171,6 +171,58 @@ public sealed class RebuildAllTests(PostgresFixture postgres) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task NoPublishedFileRepeatsAUrlOrARule()
+    {
+        await postgres.SeedJobAsync("job-1", "slug-1", province: "İstanbul");
+        await postgres.SeedCmsPageAsync("/kariyer-rehberi");
+
+        await using Harness harness = await Harness.StartAsync(postgres);
+        await harness.Builder.RebuildAsync("test", CancellationToken.None);
+
+        // The published output, not the options object — which is the only place the original
+        // defect was ever visible. Both lists had non-empty C# initialisers, the configuration
+        // binder appends rather than replaces, and the live bucket ended up serving a
+        // sitemap-static-1.xml with 14 <url> entries for 7 pages and a robots.txt with every
+        // Disallow line twice. Duplicate <loc> is invalid per the sitemaps protocol, and no
+        // test that looked at the options class alone could see it.
+        foreach ((string name, StoredFile file) in harness.Sink.Live)
+        {
+            if (name == SitemapNames.Robots)
+            {
+                continue;
+            }
+
+            // No NotEmpty here: an empty <urlset> is a real and correct state — no facet in
+            // this fixture clears its threshold, so sitemap-jobfilters is legitimately empty.
+            string[] locs = [.. Locs(file.Text)];
+
+            Assert.Equal(locs.Distinct(StringComparer.Ordinal).Count(), locs.Length);
+        }
+
+        string[] disallows =
+        [
+            .. harness.Sink.Live[SitemapNames.Robots].Text
+                .Split('\n')
+                .Where(l => l.StartsWith("Disallow:", StringComparison.Ordinal)),
+        ];
+
+        Assert.NotEmpty(disallows);
+        Assert.Equal(disallows.Distinct(StringComparer.Ordinal).Count(), disallows.Length);
+
+        // And specifically the file the defect was found in: every configured static path
+        // present, exactly once, in order.
+        Assert.Equal(
+            ["https://kariyerzamani.com/", $"{Site}/sirketler", $"{Site}/cv"],
+            Locs(harness.Sink.Live["sitemap-static-1.xml"].Text));
+    }
+
+    private static IEnumerable<string> Locs(string xml) =>
+        xml.Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.StartsWith("<loc>", StringComparison.Ordinal))
+            .Select(line => line["<loc>".Length..^"</loc>".Length]);
+
+    [Fact]
     public async Task NoSitemapEverAdvertisesTheCmsPreviewRoute()
     {
         // /cms-preview is the CMS admin console's live preview: an internal tool on the PUBLIC
@@ -353,6 +405,16 @@ public sealed class RebuildAllTests(PostgresFixture postgres) : IAsyncLifetime
             services.AddSingleton(Options.Create(new SeoOptions
             {
                 SiteUrl = Site,
+
+                // Stated, because SeoOptions no longer carries these as C# defaults — a
+                // non-empty initialiser is what made the configuration binder APPEND to them
+                // and publish every entry twice. Configuration is the only source now, and a
+                // hand-built options object is configuration. That the SHIPPED appsettings.json
+                // still carries these values is asserted separately, in
+                // ConfigurationBindingTests.
+                StaticPaths = ["/", "/sirketler", "/cv"],
+                DisallowedPaths = ["/api/", "/hesabim", "/cms-preview"],
+
                 R2 = new R2Options { Compress = false },
             }));
 

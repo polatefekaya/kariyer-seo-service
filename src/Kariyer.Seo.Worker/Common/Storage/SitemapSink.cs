@@ -91,6 +91,45 @@ public sealed class SitemapSink(
                         continue;
                     }
 
+                    // Only an object sitting where THIS configuration would write it counts as
+                    // the live copy.
+                    //
+                    // Without this, flipping Seo:R2:Compress publishes a broken set on the very
+                    // first rebuild — and it is not obvious why. The checksum is over the
+                    // UNCOMPRESSED XML, deliberately, so it does not move when compression
+                    // does; ToFileName strips `.gz` for the same reason, because the document
+                    // is the same document either way. Both are right. Together they made the
+                    // sink report `sitemap-jobs-1.xml.gz` as the live `sitemap-jobs-1.xml`
+                    // with an unchanged checksum, so the conditional-write short-circuit
+                    // SKIPPED every chunk — while the index, whose own bytes did change when
+                    // its children lost the suffix, was rewritten to name `sitemap-jobs-1.xml`
+                    // files that had never been uploaded. A self-inflicted index of 404s, with
+                    // no mistake at the edge and nothing failing anywhere.
+                    //
+                    // Identity for "is it already published" has to include the KEY, because
+                    // the key is the URL. Falling through re-uploads, which is the safe
+                    // direction and the whole set costs one rebuild.
+                    string liveKey = R2.Prefix + SitemapNames.StoredName(fileName, R2.Compress);
+
+                    if (!string.Equals(item.Key, liveKey, StringComparison.Ordinal))
+                    {
+                        // Said out loud on every tick until someone clears it. The stale object
+                        // is inert to this service — the new set is published beside it — but
+                        // it is NOT inert to a crawler, because the Cloudflare route may still
+                        // be pointed at the old suffix and would go on serving it, frozen at
+                        // the moment of the switch, with nothing failing. Removing it is a
+                        // deploy step; the obsolete sweep cannot, since it works on logical
+                        // names and re-derives the key from the current setting.
+                        logger.LogWarning(
+                            "{Key} is a leftover from a different Seo:R2:Compress setting; the "
+                            + "live object for {File} is {LiveKey}. It is not served by this "
+                            + "service's index any more, but delete it — an edge rule still "
+                            + "pointed at the old suffix would keep serving a frozen copy.",
+                            item.Key, fileName, liveKey);
+
+                        continue;
+                    }
+
                     GetObjectMetadataResponse metadata = await s3.GetObjectMetadataAsync(
                         R2.Bucket, item.Key, cancellationToken);
 
@@ -176,7 +215,11 @@ public sealed class SitemapSink(
 
             _open.Add(file);
 
-            if (!R2.Compress)
+            // Whether this file is compressed, not whether compression is on: robots.txt is
+            // never gzipped, because it is the one file whose URL cannot carry a .gz suffix.
+            // Asking SitemapNames rather than R2.Compress directly is what keeps this in step
+            // with StoredName — the two used to decide separately and disagreed.
+            if (!SitemapNames.IsCompressed(fileName, R2.Compress))
             {
                 return file;
             }
@@ -374,7 +417,9 @@ public sealed class SitemapSink(
                 },
             };
 
-            if (R2.Compress)
+            // Per file, not per configuration — robots.txt goes up uncompressed even when the
+            // XML does, so declaring gzip from R2.Compress alone would mislabel it.
+            if (SitemapNames.IsCompressed(upload.FileName, R2.Compress))
             {
                 // Content-Encoding, not a content type of its own. Google fetches
                 // `sitemap-jobs-1.xml.gz` and expects XML inside a gzip envelope; declaring
@@ -418,9 +463,7 @@ public sealed class SitemapSink(
 
         /// <summary>Adds the compression suffix, if any, to the logical file name.</summary>
         private string StoredName(string fileName) =>
-            R2.Compress && fileName.EndsWith(".xml", StringComparison.Ordinal)
-                ? fileName + ".gz"
-                : fileName;
+            SitemapNames.StoredName(fileName, R2.Compress);
 
         /// <summary>One file on its way to the bucket.</summary>
         private sealed class PendingUpload(string fileName, string contentType)
