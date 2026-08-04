@@ -9,6 +9,14 @@ namespace Kariyer.Seo.Domain.Urls;
 /// three even though only this one is ever emitted into a sitemap. A sitemap must advertise
 /// only the destination of a redirect, never a source: listing a 301 wastes crawl budget and
 /// tells Google the file is stale.
+///
+/// This shape is also built outside this service: the Jooble XML feed in
+/// kariyer_zamani_backend emits it as every &lt;link&gt; JoobleBot crawls, from
+/// src/modules/joobleFeed/jobUrl.js — a deliberate line-for-line mirror of this class.
+/// The two are pinned by asserting the same literal example URL in both suites (see
+/// UrlBuilderTests.JobUrlMatchesTheCanonicalShape). They diverged silently once: the feed
+/// shipped <c>/is-ilanlari/{slug}</c>, which does not 404 — it renders the facet listing
+/// page with a 200. If <see cref="PathPrefix"/> changes here, change it there too.
 /// </summary>
 public static class JobUrl
 {
