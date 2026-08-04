@@ -195,12 +195,28 @@ public sealed class SitemapSink(
             IReadOnlyCollection<string> obsolete,
             CancellationToken cancellationToken)
         {
-            // Close the writers before uploading. A gzip stream that has not been disposed
-            // has not written its trailer, so the object would upload as a truncated archive
-            // that every decompressor rejects — a corrupt sitemap served with a 200.
+            // Close what the SINK owns, before uploading.
+            //
+            // The caller owns the stream OpenWrite returned and has already disposed it —
+            // that is the contract on ISitemapSink.OpenWrite, and SitemapWriter honours it.
+            // What is left here is the temp FileStream underneath, which the GZipStream was
+            // deliberately given `leaveOpen: true` so as not to close, and which PutAsync
+            // cannot File.OpenRead while this handle still holds it FileShare.None.
+            //
+            // DisposeAsync only — never a FlushAsync first. Dispose is idempotent and flushes
+            // on the way out, which is what writes the gzip trailer; a gzip stream that has
+            // not been disposed would upload as a truncated archive that every decompressor
+            // rejects — a corrupt sitemap served with a 200. FlushAsync, by contrast, throws
+            // ObjectDisposedException on an already-disposed stream, and since every caller
+            // disposes, that is every stream: it discarded every staged set the service built
+            // until it was removed. Reversed, so a gzip is always closed before the file
+            // beneath it.
+            //
+            // Unlike DisposeAsync below, an IOException here is NOT swallowed. A temp file
+            // that failed to flush to disk is truncated, and abandoning the stage is better
+            // than publishing it.
             foreach (Stream stream in Enumerable.Reverse(_open))
             {
-                await stream.FlushAsync(cancellationToken);
                 await stream.DisposeAsync();
             }
 

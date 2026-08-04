@@ -43,6 +43,13 @@ public interface ISitemapStage : IAsyncDisposable
     /// The returned stream is what <see cref="Sitemaps.SitemapWriter"/> writes into, so the
     /// implementation is free to layer gzip and a multipart upload underneath and never hold
     /// the document in memory. Disposing the stream finishes that upload.
+    ///
+    /// <b>Ownership.</b> The CALLER owns the stream returned here and must dispose it — that
+    /// is what completes the document, because a gzip envelope only writes its trailer on
+    /// close. The SINK owns whatever it layered underneath and closes that itself, at commit
+    /// or at dispose. The two halves are disposed by different parties on purpose, and an
+    /// implementation must therefore tolerate reaching its own teardown with the caller's
+    /// half already closed.
     /// </summary>
     /// <param name="fileName">Logical name without any compression suffix, e.g.
     /// <c>sitemap-jobs-1.xml</c>. The sink decides the stored key and whether it is gzipped.</param>
