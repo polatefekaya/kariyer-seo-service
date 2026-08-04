@@ -140,11 +140,18 @@ public sealed class R2SitemapPublicationTests(PostgresFixture postgres) : IAsync
 
         Assert.Contains($"{Site}/kariyer-rehberi", pages.Descendants(Sitemap + "loc").Select(e => e.Value));
 
-        // robots.txt is gzipped too, and a truncated one is a de-indexing event rather than a
-        // missing file — so it gets the same trailer check.
-        string robots = Encoding.UTF8.GetString(Gunzip(objects[Prefix + "robots.txt"].Body));
+        // robots.txt is stored as plain text even with compression on, because its URL is
+        // fixed and cannot carry a .gz suffix — so no envelope, and no encoding header to
+        // mislabel it with.
+        FakeS3Bucket.StoredObject robots = objects[Prefix + "robots.txt"];
 
-        Assert.Contains($"Sitemap: {Site}/sitemap.xml", robots, StringComparison.Ordinal);
+        Assert.Null(robots.ContentEncoding);
+        Assert.Equal("text/plain", robots.ContentType);
+
+        Assert.Contains(
+            $"Sitemap: {Site}/sitemap.xml",
+            Encoding.UTF8.GetString(robots.Body),
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -212,6 +219,108 @@ public sealed class R2SitemapPublicationTests(PostgresFixture postgres) : IAsync
     }
 
     [Fact]
+    public async Task TurningCompressionOffRepublishesTheWholeSetAtItsNewKeys()
+    {
+        // THE CUTOVER, which is the dangerous moment of the Compress change and the one no
+        // amount of edge configuration can fix from the outside.
+        //
+        // It used to publish a broken set on the first rebuild after the flip, for a reason
+        // that is invisible unless you go looking. The checksum is over the UNCOMPRESSED XML,
+        // deliberately, so it does not move when compression does; GetLiveChecksumsAsync
+        // strips `.gz` for the same reason, because the document is the same document either
+        // way. Both are right on their own. Together they reported the live
+        // `sitemap-jobs-1.xml.gz` as an unchanged `sitemap-jobs-1.xml`, so the conditional-
+        // write short-circuit skipped EVERY chunk — while the index, whose own bytes did
+        // change when its children lost the suffix, was rewritten to name `.xml` objects that
+        // had never been uploaded. An index of 404s, self-inflicted, nothing failing.
+        //
+        // The sink now treats the KEY as part of "is this already published", because the key
+        // is the URL.
+        await SeedCorpusAsync();
+
+        FakeS3Bucket bucket;
+
+        await using (Harness before = await Harness.StartAsync(postgres))
+        {
+            await before.Builder.RebuildAsync("test", CancellationToken.None);
+            bucket = before.Bucket;
+        }
+
+        Assert.Contains(Prefix + "sitemap-jobs-1.xml.gz", bucket.Objects);
+
+        await using Harness after =
+            await Harness.StartAsync(postgres, compress: false, existing: bucket);
+
+        await after.Builder.RebuildAsync("test", CancellationToken.None);
+
+        IReadOnlyDictionary<string, FakeS3Bucket.StoredObject> objects = after.Bucket.Objects;
+
+        // Every child the new index names exists at the key it names. This is the assertion
+        // that was false before, and it is the only one that matters to a crawler.
+        XDocument index = XDocument.Parse(
+            Encoding.UTF8.GetString(objects[Prefix + "sitemap.xml"].Body));
+
+        string[] children = [.. index.Descendants(Sitemap + "loc").Select(e => e.Value)];
+
+        Assert.NotEmpty(children);
+        Assert.All(children, loc => Assert.EndsWith(".xml", loc, StringComparison.Ordinal));
+        Assert.All(children, loc => Assert.Contains(Prefix + loc[(loc.LastIndexOf('/') + 1)..], objects));
+
+        Assert.Contains(Prefix + "sitemap-jobs-1.xml", objects);
+        XDocument.Parse(Encoding.UTF8.GetString(objects[Prefix + "sitemap-jobs-1.xml"].Body));
+
+        // robots.txt self-heals: its key never carried a suffix, so the plain rewrite lands on
+        // the same object and replaces the gzipped body that used to be there.
+        Assert.Null(objects[Prefix + "robots.txt"].ContentEncoding);
+
+        // What does NOT clean itself up: the old `.gz` objects are still there. The obsolete
+        // sweep works on logical names and re-derives the key from the CURRENT setting, so
+        // asking it to remove the `.gz` would remove the live file instead. Deleting them is a
+        // deploy step — see DEPLOYMENT.md §4 — and the sink logs a warning naming each one on
+        // every tick until it is done. Pinned here so the residue is a known quantity rather
+        // than a surprise during the next incident.
+        Assert.Contains(Prefix + "sitemap-jobs-1.xml.gz", objects);
+    }
+
+    [Fact]
+    public async Task ThePublishedStaticSitemapAndRobotsNameEachEntryExactlyOnce()
+    {
+        await SeedCorpusAsync();
+
+        await using Harness harness = await Harness.StartAsync(postgres);
+
+        await harness.Builder.RebuildAsync("test", CancellationToken.None);
+
+        IReadOnlyDictionary<string, FakeS3Bucket.StoredObject> objects = harness.Bucket.Objects;
+
+        // Measured on the OBJECT IN THE BUCKET, which is where the defect was found. Both
+        // lists had non-empty C# initialisers and the configuration binder appends to a
+        // pre-populated collection rather than replacing it, so the defaults and the identical
+        // appsettings.json entries both survived: the live sitemap-static-1.xml.gz carried 14
+        // <url> for 7 pages and every Disallow line in robots.txt appeared twice. Duplicate
+        // <loc> is invalid per the sitemaps protocol, and nothing in this service could see it
+        // — the file was well-formed, the upload succeeded, health stayed green.
+        XDocument statics = Parse(objects[Prefix + "sitemap-static-1.xml.gz"]);
+
+        string[] locations = [.. statics.Descendants(Sitemap + "loc").Select(e => e.Value)];
+
+        Assert.Equal(3, locations.Length);
+        Assert.Equal(locations.Distinct(StringComparer.Ordinal).Count(), locations.Length);
+        Assert.Contains($"{Site}/hakkimizda", locations);
+
+        string[] disallows =
+        [
+            .. Encoding.UTF8.GetString(objects[Prefix + "robots.txt"].Body)
+                .Split('\n')
+                .Where(l => l.StartsWith("Disallow:", StringComparison.Ordinal)),
+        ];
+
+        Assert.Equal(2, disallows.Length);
+        Assert.Equal(disallows.Distinct(StringComparer.Ordinal).Count(), disallows.Length);
+        Assert.Contains("Disallow: /cms-preview", disallows);
+    }
+
+    [Fact]
     public async Task WithCompressionOffTheBucketHoldsPlainXmlAtUnsuffixedKeys()
     {
         await SeedCorpusAsync();
@@ -222,15 +331,34 @@ public sealed class R2SitemapPublicationTests(PostgresFixture postgres) : IAsync
 
         IReadOnlyDictionary<string, FakeS3Bucket.StoredObject> objects = harness.Bucket.Objects;
 
+        // THE PRODUCTION CONFIGURATION, as of the switch to Compress=false. Cloudflare fronts
+        // this bucket and negotiates encoding per client from one stored object; pre-gzipping
+        // underneath it produced doubly-compressed bodies for clients that announced gzip and
+        // unlabelled gzip bytes for clients that did not.
+        //
         // With compression off OpenWrite returns the temp FileStream itself, so the caller
-        // disposes the very stream the sink still has to read from. Same ownership question,
-        // one layer down, and it has to come out the same way.
+        // disposes the very stream the sink still has to read from. Same ownership question as
+        // the gzip case, one layer down, and it has to come out the same way.
         Assert.DoesNotContain(objects.Keys, k => k.EndsWith(".gz", StringComparison.Ordinal));
-        Assert.Contains(Prefix + "sitemap.xml", objects);
-        Assert.Contains(Prefix + "sitemap-jobs-1.xml", objects);
+
+        // The whole set at its unsuffixed keys, spelled out rather than sampled — the point of
+        // the assertion is that nothing kept a .gz and nothing went missing.
+        string[] expected =
+        [
+            Prefix + "sitemap.xml",
+            Prefix + "sitemap-jobs-1.xml",
+            Prefix + "sitemap-jobfilters-1.xml",
+            Prefix + "sitemap-pages-1.xml",
+            Prefix + "sitemap-static-1.xml",
+            Prefix + "robots.txt",
+        ];
+
+        Assert.Equal(expected.Order(StringComparer.Ordinal), objects.Keys.Order(StringComparer.Ordinal));
 
         foreach ((string key, FakeS3Bucket.StoredObject stored) in objects)
         {
+            // No Content-Encoding on ANY object, robots.txt included. An encoding header over
+            // a plain body is the mirror image of the bug being fixed, and just as unreadable.
             Assert.Null(stored.ContentEncoding);
 
             if (key.EndsWith(".xml", StringComparison.Ordinal))
@@ -239,14 +367,18 @@ public sealed class R2SitemapPublicationTests(PostgresFixture postgres) : IAsync
             }
         }
 
-        // And the index advertises the unsuffixed names, so the two independent copies of the
-        // suffix rule agree in this direction too.
+        // And the index advertises those same unsuffixed names. Asserted positively — every
+        // child ends in .xml and resolves to an object that exists — rather than merely "no
+        // .gz", because an index naming a file the sink did not write is a list of 404s and
+        // nothing in this service would report it.
         XDocument index = XDocument.Parse(
             Encoding.UTF8.GetString(objects[Prefix + "sitemap.xml"].Body));
 
-        Assert.DoesNotContain(
-            index.Descendants(Sitemap + "loc").Select(e => e.Value),
-            loc => loc.EndsWith(".gz", StringComparison.Ordinal));
+        string[] children = [.. index.Descendants(Sitemap + "loc").Select(e => e.Value)];
+
+        Assert.NotEmpty(children);
+        Assert.All(children, loc => Assert.EndsWith(".xml", loc, StringComparison.Ordinal));
+        Assert.All(children, loc => Assert.Contains(Prefix + loc[(loc.LastIndexOf('/') + 1)..], objects));
     }
 
     private Task SeedCorpusAsync() =>
@@ -337,9 +469,14 @@ public sealed class R2SitemapPublicationTests(PostgresFixture postgres) : IAsync
 
         public FakeS3Bucket Bucket => bucket;
 
-        public static async Task<Harness> StartAsync(PostgresFixture postgres, bool compress = true)
+        /// <param name="existing">
+        /// A bucket to keep writing into, so a second run can be observed against the first
+        /// run's objects. Null starts empty, which is what every test but the cutover one wants.
+        /// </param>
+        public static async Task<Harness> StartAsync(
+            PostgresFixture postgres, bool compress = true, FakeS3Bucket? existing = null)
         {
-            FakeS3Bucket bucket = new();
+            FakeS3Bucket bucket = existing ?? new FakeS3Bucket();
 
             ServiceCollection services = [];
 
@@ -359,6 +496,14 @@ public sealed class R2SitemapPublicationTests(PostgresFixture postgres) : IAsync
             services.AddSingleton(Options.Create(new SeoOptions
             {
                 SiteUrl = Site,
+
+                // Stated, because SeoOptions carries no defaults for these any more — a
+                // non-empty initialiser is what made the binder APPEND to them and publish
+                // every entry twice. Three distinct paths, so the published file can be
+                // asserted to contain three distinct <loc> and not six.
+                StaticPaths = ["/", "/sirketler", "/hakkimizda"],
+                DisallowedPaths = ["/api/", "/cms-preview"],
+
                 R2 = new R2Options
                 {
                     Bucket = "kariyer-seo-test",
@@ -369,8 +514,11 @@ public sealed class R2SitemapPublicationTests(PostgresFixture postgres) : IAsync
                     Prefix = Prefix,
                     StagingPrefix = "_staging/",
 
-                    // On by default here, unlike every sibling harness — this is the
-                    // production setting, and it is the configuration the outage happened in.
+                    // Compression ON in this harness, unlike every sibling, even though it is
+                    // no longer the production default. Two reasons it stays: it is the
+                    // configuration the commit outage happened in, and it is the only one that
+                    // exercises the gzip trailer and the .gz key at all. The compression-off
+                    // path — which IS what production runs now — has its own test below.
                     Compress = compress,
                 },
 

@@ -32,6 +32,15 @@ public sealed class SeoOptionsTests
         ["Seo:R2:StagingPrefix"] = "_staging/",
         ["Seo:FacetManifest:Url"] = "https://kariyerzamani.com/seo/facet-manifest.json",
         ["Garnet:Enabled"] = "false",
+
+        // Spelled out here because the options class no longer carries them. A non-empty
+        // collection initialiser is what doubled these lists against appsettings.json — the
+        // binder appends to a populated collection instead of replacing it — so the defaults
+        // are gone and configuration is the only source. Every test below inherits these two.
+        ["Seo:StaticPaths:0"] = "/",
+        ["Seo:StaticPaths:1"] = "/hakkimizda",
+        ["Seo:DisallowedPaths:0"] = "/api/",
+        ["Seo:DisallowedPaths:1"] = "/cms-preview",
     };
 
     [Fact]
@@ -146,6 +155,94 @@ public sealed class SeoOptionsTests
 
         // An absolute URL here would be concatenated onto the origin and emitted as nonsense.
         Assert.Throws<OptionsValidationException>(() => Resolve(config));
+    }
+
+    [Fact]
+    public void ADisallowedPathThatIsNotSiteRelativeFailsStartup()
+    {
+        Dictionary<string, string?> config = new(Valid)
+        {
+            ["Seo:DisallowedPaths:0"] = "https://kariyerzamani.com/api/",
+        };
+
+        // A Disallow rule is matched against the path alone, so an absolute URL never matches
+        // anything. The line looks like protection and provides none.
+        Assert.Throws<OptionsValidationException>(() => Resolve(config));
+    }
+
+    [Fact]
+    public void ADuplicateStaticPathFailsStartup()
+    {
+        // THE REGRESSION, in the shape configuration can still produce it.
+        //
+        // It reached production through the options class rather than through this file: both
+        // lists had non-empty C# initialisers, and the configuration binder APPENDS bound
+        // values to a pre-populated collection instead of replacing it, so the defaults and
+        // the identical appsettings.json entries both survived. The live bucket served a
+        // sitemap-static-1.xml.gz with 14 <url> entries for 7 pages, and duplicate <loc> is
+        // invalid per the sitemaps protocol.
+        //
+        // The initialisers are empty now, which closes that door. This closes the other one:
+        // a duplicate typed into appsettings.json, or an environment variable landing on an
+        // index the file already uses.
+        Dictionary<string, string?> config = new(Valid) { ["Seo:StaticPaths:2"] = "/" };
+
+        Assert.Throws<OptionsValidationException>(() => Resolve(config));
+    }
+
+    [Fact]
+    public void ADuplicateDisallowedPathFailsStartup()
+    {
+        // Same defect, the other list — it emitted every Disallow line in robots.txt twice.
+        Dictionary<string, string?> config = new(Valid) { ["Seo:DisallowedPaths:2"] = "/api/" };
+
+        Assert.Throws<OptionsValidationException>(() => Resolve(config));
+    }
+
+    [Fact]
+    public void ADuplicateIsRejectedRatherThanDeduplicated()
+    {
+        Dictionary<string, string?> config = new(Valid) { ["Seo:StaticPaths:2"] = "/" };
+
+        OptionsValidationException error =
+            Assert.Throws<OptionsValidationException>(() => Resolve(config));
+
+        // Pinned because the alternative — collapsing the list quietly — is the tempting fix
+        // and the wrong one. It would publish a correct sitemap while leaving configuration
+        // bound in a way its author does not believe, so the NEXT thing that breaks arrives
+        // with no history. The message has to name the cause, because nobody guesses "the
+        // binder appends to a pre-populated collection" from a duplicated URL.
+        string message = string.Join(' ', error.Failures);
+
+        Assert.Contains("Seo:StaticPaths", message, StringComparison.Ordinal);
+        Assert.Contains("APPENDS", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEmptyStaticPathListFailsStartup()
+    {
+        // With the C# defaults gone, an empty list means configuration did not supply one —
+        // and nothing downstream would report it. The rebuild still writes
+        // sitemap-static-1.xml, still uploads it, still succeeds; the file is a valid, empty
+        // <urlset>, and the home page simply stops being advertised.
+        Dictionary<string, string?> config = new(Valid);
+        config.Remove("Seo:StaticPaths:0");
+        config.Remove("Seo:StaticPaths:1");
+
+        Assert.Throws<OptionsValidationException>(() => Resolve(config));
+    }
+
+    [Fact]
+    public void AnEmptyDisallowedPathListIsAccepted()
+    {
+        // The deliberate asymmetry with the test above: `Allow: /` and nothing else is a
+        // coherent robots.txt that merely spends crawl budget, not a silent de-listing. A
+        // deployment could mean it.
+        Dictionary<string, string?> config = new(Valid);
+        config.Remove("Seo:DisallowedPaths:0");
+        config.Remove("Seo:DisallowedPaths:1");
+
+        Assert.Empty(Resolve(config).DisallowedPaths);
     }
 
     private static Dictionary<string, string?> With(string key, string? value) =>

@@ -16,4 +16,20 @@
     <ProjectReference Include="..\..\src\Kariyer.Seo.Worker\Kariyer.Seo.Worker.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The SHIPPED appsettings.json, linked into the test output so ConfigurationBindingTests
+      can bind the real file rather than a copy of it.
+
+      This is the point of that suite. The collection-doubling bug survived a test suite that
+      exercised the options class against in-memory settings only: the C# defaults and the
+      JSON entries were never in the same binder at the same time, so the one place they
+      collided was production. Linked rather than duplicated so the file cannot drift — a path
+      added to appsettings.json is a path this build asserts on.
+    -->
+    <Content Include="..\..\src\Kariyer.Seo.Worker\appsettings.json"
+             Link="appsettings.json"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

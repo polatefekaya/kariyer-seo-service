@@ -260,7 +260,9 @@ public sealed class JobSitemapProjector(
 
     private SitemapIndexEntry Entry(string fileName, DateTimeOffset? lastModified)
     {
-        string stored = Seo.R2.Compress ? fileName + ".gz" : fileName;
+        // The stored key, not the logical name — see SitemapBuilder.Record. Shared with the
+        // sink through SitemapNames so the index cannot name something the sink did not write.
+        string stored = SitemapNames.StoredName(fileName, Seo.R2.Compress);
 
         return new SitemapIndexEntry(SiteUrls.Absolute(Seo.SiteUrl, "/" + stored), lastModified);
     }

@@ -161,8 +161,12 @@ never loses an event and a crash never emits one without the state behind it.
 `SitemapSink` writes each file to a **staging key** (`_staging/sitemap-jobs-1.xml.gz`), then
 performs the swap only once every file of the set is uploaded — either by copying staging →
 live keys, or by writing to a versioned prefix and updating a single `sitemap.xml` pointer
-last. A crawler fetching mid-rebuild always gets a **consistent, complete** set. gzip the
-files (Google accepts `.xml.gz`).
+last. A crawler fetching mid-rebuild always gets a **consistent, complete** set.
+
+> **Revised in implementation.** The plan called for gzipping the files (Google accepts
+> `.xml.gz`), and `Seo:R2:Compress` still does exactly that. It now defaults to **false**,
+> because Cloudflare fronts the bucket and re-compresses what it is given — the edge should
+> own content encoding when there is an edge. See `docs/DEPLOYMENT.md` §4.
 
 ### 6.4 Reconstruction
 On boot, or if `seo_url_state` is ever suspected stale, `RebuildAll` re-derives everything

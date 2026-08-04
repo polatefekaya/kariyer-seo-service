@@ -14,6 +14,9 @@ public sealed class UrlBuilderTests
     private const string Site = "https://kariyerzamani.com";
 
     [Fact]
+    // This literal is load-bearing across repos: the same string is asserted in
+    // kariyer_zamani_backend/src/modules/joobleFeed/__tests__/jobUrl.test.js. Grep it to
+    // find every producer of a job-detail URL. Changing it here means changing it there.
     public void JobUrlMatchesTheCanonicalShape() =>
         Assert.Equal(
             "https://kariyerzamani.com/is-ilanlari/ilan/yazilim-muhendisi-istanbul-abc123",

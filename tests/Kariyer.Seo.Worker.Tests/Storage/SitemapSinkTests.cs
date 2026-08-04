@@ -146,7 +146,7 @@ public sealed class SitemapSinkTests
     }
 
     [Fact]
-    public async Task RobotsTxtIsGzippedWithoutAGzSuffix()
+    public async Task RobotsTxtIsNeverCompressedEvenWhenTheXmlIs()
     {
         Fixture fixture = new(compress: true);
 
@@ -159,19 +159,19 @@ public sealed class SitemapSinkTests
 
         StoredObject robots = Assert.Single(fixture.Puts);
 
-        // StoredName only suffixes `.xml`, so robots.txt keeps its name and declares the
-        // compression in the header alone. Nothing else in the suite pins this asymmetry, and
-        // a `.gz` appearing here would break the one URL that is hard-coded into every
-        // crawler on the internet.
+        // robots.txt is the one file whose URL is fixed — every crawler fetches /robots.txt
+        // exactly — so it can never take a .gz suffix. It used to be gzipped anyway and
+        // stored under the suffix-less key with Content-Encoding: gzip, because OpenWrite
+        // decided what to compress and StoredName decided what to rename, separately. Anything
+        // fetching without announcing gzip support got binary. One predicate now answers both.
         Assert.Equal("sitemaps/_staging/robots.txt", robots.Key);
-        Assert.Equal("gzip", robots.ContentEncoding);
+        Assert.Null(robots.ContentEncoding);
         Assert.Equal("text/plain", robots.ContentType);
 
-        // Same trailer guard as the XML files: a truncated robots.txt is a robots.txt no
-        // crawler can read, which is a de-indexing event rather than a missing file.
+        // Plain text, readable without decompressing anything.
         Assert.Contains(
             "Sitemap: https://kariyerzamani.com/sitemap.xml",
-            Encoding.UTF8.GetString(Gunzip(robots.Body)),
+            Encoding.UTF8.GetString(robots.Body),
             StringComparison.Ordinal);
     }
 

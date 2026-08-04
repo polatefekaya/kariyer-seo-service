@@ -255,6 +255,18 @@ static void LogStartupPlan(WebApplication app, RolePlan plan)
             + "must never be the production host.", seo.SiteUrl);
     }
 
+    // Stated because it decides the URLs, and the party that has to agree with it lives in
+    // another system. Nothing here can check the Cloudflare route, so the log line is the
+    // only place the two are ever seen together.
+    if (seo.R2.Compress)
+    {
+        logger.LogWarning(
+            "Seo:R2:Compress is ON: sitemap objects are stored as .xml.gz and the index names "
+            + "its children with that suffix. The Cloudflare route must map /sitemap-*.xml to "
+            + "the .xml.gz keys or the index is a list of 404s. Correct only for a deployment "
+            + "serving straight from the bucket — behind a CDN the edge should compress.");
+    }
+
     logger.LogInformation(
         "Starting SEO service as {Role}: rebuild={RunsFullRebuild}, "
         + "freshnessConsumers={ConsumesFreshnessEvents}, flush={RunsDirtyFlush}",

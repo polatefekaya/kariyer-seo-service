@@ -165,14 +165,16 @@ public sealed class R2SmokeTests(PostgresFixture postgres) : IAsyncLifetime
                 Assert.Contains(r2.Prefix + loc[(loc.LastIndexOf('/') + 1)..], keys);
             }
 
-            // robots.txt is gzipped too but stored without a .gz suffix.
+            // robots.txt is stored uncompressed whatever Compress says: its URL is fixed and
+            // cannot take a .gz suffix, so compressing it would mean serving binary to
+            // anything that did not announce gzip support.
             GetObjectResponse robots = await s3.GetObjectAsync(r2.Bucket, r2.Prefix + "robots.txt");
 
-            Assert.Equal("gzip", robots.Headers.ContentEncoding);
+            Assert.Null(robots.Headers.ContentEncoding);
 
             Assert.Contains(
                 $"Sitemap: {Site}/sitemap.xml",
-                Encoding.UTF8.GetString(Gunzip(await ReadAllAsync(robots))),
+                Encoding.UTF8.GetString(await ReadAllAsync(robots)),
                 StringComparison.Ordinal);
         }
         finally

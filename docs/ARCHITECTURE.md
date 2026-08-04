@@ -259,6 +259,62 @@ the computed checksum. The log alone would leave a file permanently missing from
 restored from backup; R2 alone would re-upload everything whenever a metadata read failed.
 Any disagreement falls through to "upload" — the safe direction.
 
+### Identity includes the key
+
+The third bullet above has a sharp edge that took a production change to find. Compression is
+deliberately *not* part of a file's identity: the checksum is over the uncompressed XML, and
+the live-checksum read strips `.gz` because `sitemap-jobs-1.xml` is the same document however
+it was stored. Both are correct, and together they were wrong.
+
+Flipping `Seo:R2:Compress` moves every stored key without moving a single byte of any
+document. So the sink reported the live `sitemap-jobs-1.xml.gz` as an unchanged
+`sitemap-jobs-1.xml`, the short-circuit skipped **every chunk**, and the index — whose own
+bytes *did* change, because its children lost the suffix — was rewritten to name `.xml`
+objects that had never been uploaded. An index of 404s, produced by the service itself, with
+nothing failing and nothing to see.
+
+The resolution is a distinction worth keeping straight: *content* identity excludes the
+encoding, but *published* identity is the **key**, because the key is the URL a crawler
+requests. `GetLiveChecksumsAsync` therefore accepts an object as live only when it sits where
+the current configuration would write it, and logs the leftovers. See `DEPLOYMENT.md` §4 for
+the cutover.
+
+---
+
+## 6a. Configuration collections bind by appending
+
+Every collection-valued options property in this service initialises to `[]`, and that is a
+rule rather than a style.
+
+.NET's configuration binder **appends** bound values to a collection that is already
+populated; it does not replace it. A property with entries in its initialiser therefore binds
+to *defaults plus configuration*, never to configuration alone, and there is no binder setting
+that changes it. `Seo:StaticPaths` and `Seo:DisallowedPaths` carried the same values in C# and
+in `appsettings.json`, so both shipped doubled: `sitemap-static-1.xml.gz` served 14 `<url>`
+entries for 7 pages — duplicate `<loc>` is invalid per the sitemaps protocol — and every
+`Disallow` line in `robots.txt` appeared twice. Nothing detected it. It was found by reading
+the published output of a production run.
+
+So:
+
+- **Values live in `appsettings.json`, which is the single source.** That costs no resilience:
+  the file ships inside the image, so there is no deployment where the binary is present and
+  the file is not.
+- **Duplicates fail startup; they are not deduplicated.** A silent collapse would publish a
+  correct sitemap while leaving configuration bound in a way its author does not believe,
+  which hides the next occurrence. The rejection message names the *cause*, because nobody
+  guesses "the binder appends" from a repeated URL.
+- **An empty `StaticPaths` also fails startup**, since with the defaults gone an empty list
+  means configuration did not supply one — and the rebuild would happily publish a valid,
+  empty `<urlset>` and quietly stop advertising the home page. `DisallowedPaths` may be empty:
+  `Allow: /` and nothing else is a coherent policy someone could mean.
+
+`ConfigurationBindingTests` enforces this against the file that actually ships, including a
+reflection sweep asserting that no bound options type anywhere in the service carries a
+non-empty collection default. Tests over the C# defaults alone cannot see this class of bug —
+they never put the defaults and the JSON in the same binder, which is the only arrangement in
+which the two collide. That is why it shipped.
+
 ---
 
 ## 7. The debounce

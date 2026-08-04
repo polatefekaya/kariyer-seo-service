@@ -48,6 +48,34 @@ public static class SitemapNames
     }
 
     /// <summary>
+    /// Whether a given file is stored gzip-compressed, when compression is switched on.
+    ///
+    /// <b>The XML documents only.</b> <c>robots.txt</c> is never compressed however this is
+    /// configured, because it is the one file whose URL is fixed: every crawler on the
+    /// internet fetches <c>/robots.txt</c> exactly, so it can never carry a <c>.gz</c>
+    /// suffix — and a file compressed but not renamed is the worst of both. That is what
+    /// shipped: <c>robots.txt</c> was gzipped, stored under a suffix-less key, and served
+    /// with <c>Content-Encoding: gzip</c>, so anything fetching it without announcing gzip
+    /// support received binary.
+    ///
+    /// This predicate and <see cref="StoredName"/> are the single source of that rule. They
+    /// were previously two separate expressions — one deciding what to compress, one deciding
+    /// what to rename — which is exactly how the two came to disagree.
+    /// </summary>
+    public static bool IsCompressed(string fileName, bool compress) =>
+        compress && fileName.EndsWith(".xml", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The key a file is stored under, and therefore the URL a crawler fetches it at.
+    ///
+    /// The sitemap index must name children by THIS, not by the logical file name: an index
+    /// naming <c>sitemap-jobs-1.xml</c> for an object stored at <c>sitemap-jobs-1.xml.gz</c>
+    /// is an index of 404s, and nothing in this service would report it.
+    /// </summary>
+    public static string StoredName(string fileName, bool compress) =>
+        IsCompressed(fileName, compress) ? fileName + ".gz" : fileName;
+
+    /// <summary>
     /// True when a stored file name belongs to this service's set.
     ///
     /// Used before deleting anything from the bucket prefix, so a bucket that also holds
