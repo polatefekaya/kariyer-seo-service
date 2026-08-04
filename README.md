@@ -63,6 +63,23 @@ dotnet test Kariyer.Seo.slnx          # integration tests need a Docker daemon
 dotnet run --project src/Kariyer.Seo.Worker --launch-profile all
 ```
 
+### Verifying the R2 upload path before a deploy
+
+Run this if you touch `SitemapSink`, `StorageExtensions`, or the AWS SDK version. **No other
+test can tell you whether uploads work.** `FakeS3Bucket` is in-process and signs nothing, and
+MinIO — the dev stand-in — accepts request signing that R2 rejects, so both stay green through
+a total upload outage. R2 is the only thing that answers the question.
+
+```bash
+export SEO_R2_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+export SEO_R2_BUCKET=… SEO_R2_ACCESS_KEY=… SEO_R2_SECRET_KEY=…
+dotnet test tests/Kariyer.Seo.IntegrationTests --filter FullyQualifiedName~R2SmokeTests
+```
+
+It writes a full sitemap set under a unique `seo-smoke/<guid>/` prefix, reads every object
+back, and deletes them again — safe to point at the production bucket. Without the variables
+it reports as **skipped**, never as passed.
+
 | Endpoint | |
 |---|---|
 | `GET /health` | Liveness — no dependencies |
@@ -78,7 +95,8 @@ src/Kariyer.Seo.Domain      pure — no I/O, no DbContext, no clock. Zero Packag
 src/Kariyer.Seo.Worker      host, feature slices, all infrastructure.
 tests/…Domain.Tests         golden XML fixtures, thresholds, URL builders, robots.
 tests/…Worker.Tests         roles, options validation, debounce, schema pinning.
-tests/…IntegrationTests     Testcontainers Postgres + RabbitMQ, MassTransit harness, R2 stub.
+tests/…IntegrationTests     Testcontainers Postgres + RabbitMQ, MassTransit harness, R2 stub,
+                            plus an opt-in smoke test against a real R2 bucket.
 ```
 
 `Kariyer.Seo.Domain.csproj` contains no package reference at all. That emptiness is the

@@ -345,6 +345,29 @@ public sealed class SitemapSink(
                 Key = key,
                 InputStream = body,
                 ContentType = upload.ContentType,
+
+                // DO NOT REMOVE. This flag looks like a no-op and is not.
+                //
+                // The SDK defaults it to true, which signs the body as a streaming chunked
+                // payload and sends `x-amz-content-sha256:
+                // STREAMING-AWS4-HMAC-SHA256-PAYLOAD`. Cloudflare R2 does not implement that
+                // signing mode and rejects the request outright — every upload this service
+                // ever attempted against a real bucket failed with "not implemented", while
+                // the staged set was correctly discarded and the cron loop carried on. False
+                // to send an ordinary signed payload instead, which R2 accepts.
+                //
+                // Nothing in the test suite can catch its removal over the wire: the fake
+                // bucket is in-process and never signs anything, and MinIO — the dev stand-in
+                // — implements the streaming mode, so it accepts the request either way. The
+                // failure appears only against R2. SitemapSinkTests asserts on the flag
+                // itself for that reason.
+                //
+                // NOT DisablePayloadSigning. That would work too, by sending UNSIGNED-PAYLOAD,
+                // but it drops the body integrity check and the SDK requires HTTPS for it —
+                // which the MinIO dev stack, on plain http://minio:9000, does not use. This
+                // keeps the payload signed and works against both.
+                UseChunkEncoding = false,
+
                 Headers =
                 {
                     CacheControl = options.CacheControl,

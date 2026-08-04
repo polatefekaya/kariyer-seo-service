@@ -116,6 +116,36 @@ public sealed class SitemapSinkTests
     }
 
     [Fact]
+    public async Task NoUploadUsesChunkedPayloadSigningWhichR2RejectsOutright()
+    {
+        Fixture fixture = new(compress: true);
+
+        await using (ISitemapStage stage = await fixture.Sink.BeginAsync(CancellationToken.None))
+        {
+            fixture.WriteUrlSet(stage, SitemapNames.JobsBase, "yazilim-muhendisi-1");
+            await fixture.WriteIndexAndRobotsAsync(stage);
+
+            await stage.CommitAsync(SitemapNames.Index, [], CancellationToken.None);
+        }
+
+        Assert.NotEmpty(fixture.Puts);
+
+        // The SDK defaults UseChunkEncoding to true, which signs the body as a streaming
+        // chunked payload: `x-amz-content-sha256: STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, with
+        // chunk framing around the bytes. Cloudflare R2 does not implement that mode and
+        // rejects the request with "STREAMING-AWS4-HMAC-SHA256-PAYLOAD not implemented", so
+        // with it left on this service cannot upload anything at all.
+        //
+        // This assertion exists because NOTHING ELSE CAN CATCH IT. The fake bucket is
+        // in-process and never signs a request; MinIO, the dev stand-in, does implement the
+        // streaming mode and accepts the upload either way — verified, not assumed. The
+        // failure appears only against a real R2 bucket, which no automated test here
+        // reaches. So the flag is pinned here, and R2SmokeTests covers it for real when
+        // credentials are supplied.
+        Assert.All(fixture.Puts, put => Assert.False(put.UseChunkEncoding));
+    }
+
+    [Fact]
     public async Task RobotsTxtIsGzippedWithoutAGzSuffix()
     {
         Fixture fixture = new(compress: true);
@@ -232,7 +262,12 @@ public sealed class SitemapSinkTests
 
     /// <summary>One object as it reached the bucket.</summary>
     private sealed record StoredObject(
-        string Key, byte[] Body, string? ContentType, string? ContentEncoding, string? CacheControl);
+        string Key,
+        byte[] Body,
+        string? ContentType,
+        string? ContentEncoding,
+        string? CacheControl,
+        bool UseChunkEncoding);
 
     private sealed class Fixture
     {
@@ -332,7 +367,8 @@ public sealed class SitemapSinkTests
                 buffer.ToArray(),
                 request.ContentType,
                 request.Headers.ContentEncoding,
-                request.Headers.CacheControl));
+                request.Headers.CacheControl,
+                request.UseChunkEncoding));
 
             return new PutObjectResponse();
         }
